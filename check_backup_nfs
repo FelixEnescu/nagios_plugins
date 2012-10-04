@@ -56,7 +56,7 @@ PROGNAME=`/bin/basename $0`
 PROGPATH=`echo $0 | /bin/sed -e 's,[\\/][^\\/][^\\/]*$,,'`
 REVISION="@NP_VERSION@"
 
-#. $PROGPATH/utils.sh
+. $PROGPATH/utils.sh
 
 print_usage() {
     echo "Usage: $PROGNAME -b backup_device -d dir_to_check -a age"
