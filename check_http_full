@@ -1,0 +1,222 @@
+#!/usr/bin/python
+
+##############################################################################
+#
+# Copyright (c) 2007 Syslab.com.
+#
+# This software is subject to the provisions of the Zope Public License,
+# Version 2.0 (ZPL).  A copy of the ZPL should accompany this distribution.
+# THIS SOFTWARE IS PROVIDED "AS IS" AND ANY AND ALL EXPRESS OR IMPLIED
+# WARRANTIES ARE DISCLAIMED, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+# WARRANTIES OF TITLE, MERCHANTABILITY, AGAINST INFRINGEMENT, AND FITNESS
+# FOR A PARTICULAR PURPOSE
+#
+##############################################################################
+
+
+"""%(program)s: retrieve a complete http request including all page assets. 
+    Requires wget. Authentication is made zope specific.
+
+usage:  %(program)s [options] 
+
+Options:
+-h/--help   -- print this help text
+-U/--url    -- the URL you want to check
+-w/--warn   -- seconds threshold for the warning state.
+-c/--crit   -- seconds threshold for the critical state
+-u/--user   -- username if you want to check authenticated
+-p/--passwd -- password
+"""
+
+import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+import getopt
+import os
+import shutil
+import sys
+from tempfile import *
+
+import urllib
+
+from StringIO import StringIO
+
+STATE_OK =      0
+STATE_WARN =    1
+STATE_CRIT =    2
+STATE_UNKNOWN = 3
+
+__dbg__ = 0
+__LOG__ = 0
+
+CMDLINE = "/usr/bin/time -f \"%e\" /usr/bin/wget "
+AUTHLINE = " --post-data '__ac_name=%s&__ac_password=%s' "
+PARAMS = " --page-requisites --delete-after -nd -nH -nv  "
+TMPDIR = "/tmp"
+LOGPATH = TMPDIR + "/nagios_check_http_requisites.log"
+# No cookie support at the moment
+COOKIELINE = " "
+#--header='Accept-Encoding: gzip,deflate' "
+
+def dbg(t,d):
+    if __dbg__ == 0:
+        return
+    print "DBG (%s): %s" % (t,d)
+    
+def log(txt):
+    if __LOG__:
+        fh = open(LOGPATH, 'w')
+        fh.write(txt)
+        fh.close()    
+
+def main():
+    out = StringIO()
+    out.write("START\n")
+    try:
+        opts, args = getopt.getopt(sys.argv[1:],
+            "h:U:w:c:u:p:",
+            ["help", "url=","warn=", "crit=", "user=", "passwd=" ]
+            )
+    except getopt.GetoptError, msg:
+        usage(sys.stderr, "\nIllegal argument")
+        
+    url = ""
+    user = ""
+    passwd = ""
+        
+    out.write("Options: %s\n" %str(opts))
+
+
+    for opt, arg in opts:
+        if opt in ("-h", "--help"):
+            usage(sys.stderr)
+        if opt in ("-U", "--url"):
+            url = arg          
+        if opt in ("-u", "--user"):
+            user = arg          
+        if opt in ("-p", "--passwd"):
+            passwd = arg          
+        if opt in ("-w", "--warn"):
+            try:
+                warn = float(arg.strip())
+            except Exception,e: 
+                usage(sys.stderr, e)
+        if opt in ("-c", "--crit"):
+            try:
+                crit = float(arg.strip())
+            except Exception,e: 
+                usage(sys.stderr, e)
+            
+    if url=='':
+        usage(sys.stderr, "\nError: No URL supplied")
+            
+    if user.startswith('-'):
+        user = ''
+    if passwd.startswith('-'):
+        passwd = ''
+
+    result = getResult(url, warn, crit, user, passwd, out)       
+    
+    out.write('Result: %s\n' %str(result))
+    log(out.getvalue())
+    
+    print result[1]
+    sys.exit(result[0])
+
+
+def getResult(url, warn, crit, user, password, out):
+    try:
+        data = fetchCheck(url, user, password)
+    except Exception, fetch:
+        state = STATE_CRIT
+        info = "%s - Connection not possible" %state_text(2)
+        dbg("Error Fetching Data", fetch)
+        out.write('Connection Err: %s\n' %fetch)
+        return (state, info)
+    lines = data.split("\n")
+    if len(lines)<2:
+        return (STATE_UNKNOWN, "UNKNOWN - Unexpected data returned. Check Plugin")
+
+    elems = lines[-2].split(" ")
+    if elems[0] == 'Command':
+        elems = lines[-3].split(" ")
+
+    size = elems[3]
+    if size == 0:
+        return (STATE_CRITICAL, "CRITICAL - No data retrieved. Check URL")
+        
+    sizeorig = size
+    if size[-1] == 'G':
+	size = float(size[0:-1]) * 1000000000
+    elif size[-1] == 'M':
+	size = float(size[0:-1]) * 1000000
+    elif size[-1] == 'K':
+	size = float(size[0:-1]) * 1000
+    
+    num = elems[1]
+    if num == 0:
+        return (STATE_CRITICAL, "CRITICAL - No files retrieved. Check URL")
+    real_t = float(lines[-1].strip())
+    perfdata = "time=%s;size=%s;number=%s" %(real_t, size, num )
+
+    state = STATE_UNKNOWN
+    if  real_t<warn: 
+        state = STATE_OK
+    if real_t< crit and real_t>warn:
+        state = STATE_WARN
+    if real_t>crit:
+        state = STATE_CRIT
+    retdata = state_text(state) + " - Downloaded: %s bytes in %s files in %.2f seconds | %s" % (sizeorig, num, real_t, perfdata)
+    return (state, retdata)
+
+
+def state_text(state):
+    if state==0:
+        return "OK"
+    if state==1:
+        return "WARNING"
+    if state==2:
+        return "CRITICAL"
+    if state==3:
+        return "UNKNOWN"
+
+
+def usage(stream, msg=None):
+    if msg:
+        print >>stream, msg
+        print >>stream
+    program = os.path.basename(sys.argv[0])
+    print >>stream, __doc__ % {"program": program}
+    sys.exit(STATE_UNKNOWN)
+
+
+def fetchCheck(url, user, password):
+    """ fetches a page including requisites using wget """
+    tmp = mkdtemp(dir=TMPDIR)
+    
+    os.chdir(tmp)
+    if user != "":
+        AUTH = AUTHLINE % (user, password)
+    else:
+        AUTH =""
+        
+    url = "'" + url + "'"    
+    CMD = CMDLINE + AUTH + PARAMS + COOKIELINE + url
+    
+    std_out, std_in = os.popen4(CMD)
+    data = std_in.read()
+    
+    try:
+        if os.access(tmp, os.F_OK):
+            RMCMD = "rm -f %s/*" % tmp
+            os.popen(RMCMD)
+            os.rmdir(tmp)
+    except Exception, e:
+        log("Could not remove tmp directory: " + tmp)
+        log("Error: %s" %e)
+
+    return data.strip()
+
+if __name__ == "__main__":
+    main()
+
