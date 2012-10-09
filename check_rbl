@@ -295,14 +295,14 @@ sub run {
         spec     => 'critical|c=i',
         help     => 'Number of blacklisting servers for a critical warning',
         required => 0,
-        default  => 1,
+        default  => 0,
     );
 
     $options->arg(
         spec     => 'warning|w=i',
         help     => 'Number of blacklisting servers for a warning',
         required => 0,
-        default  => 1,
+        default  => 0,
     );
 
     $options->arg(
