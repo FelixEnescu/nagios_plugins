@@ -58,6 +58,8 @@ REVISION="@NP_VERSION@"
 
 . $PROGPATH/utils.sh
 
+start=$( $DATE +'%s' )
+
 print_usage() {
     echo "Usage: $PROGNAME -b backup_device -d dir_to_check -a age"
 	echo "       age last char must be hdwmy: hours, days, weeks, months, years. Ex: 12h; 3w"
@@ -236,15 +238,22 @@ crtsecs=$( $DATE +'%s' )
 
 let dir_age_secs=crtsecs-dirsecs
 
+
+
 if [ "$dir_age_secs" -ge "$age_secs" ] ; then
 	# Backup is stale
-	echo "Backup $dirtocheck on device $backupdevice is stale - older than $age"
+	echo -n "Backup $dirtocheck on device $backupdevice is stale - older than $age"
     exitstatus=$STATE_CRITICAL
 else
 	# Backup is fresh
-    echo "Backup $dirtocheck on device $backupdevice is fresh - newer than $age"
+    echo -n "Backup $dirtocheck on device $backupdevice is fresh - newer than $age"
     exitstatus=$STATE_OK
 fi
+
+#servers=2;0;0 time=2s;;
+end=$( $DATE +'%s' )
+let duration=end-start
+echo -en " | age=${dir_age_secs}s;$age_secs;$age_secs time=${duration}s;0;0\n"
 
 $SUDO  $UMOUNT $tempdir
 $RMDIR $tempdir
