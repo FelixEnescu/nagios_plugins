@@ -1,0 +1,430 @@
+#!/usr/bin/perl
+
+
+package main;
+
+# Check the backup age plugin for Nagios
+# Written by Felix Enescu (f@qsol.ro) based on structure of check_rbl from Elan Ruusamae <glen@delfi.ee>
+#	Portions:
+#		FTP logic Copyright (c) 2007 Paul Archer in check_ftp_rw
+#		Extended with support for SFTP (Steffen Poulsen) from check_ftp_rw
+#
+# Last Modified: 10-09-2012
+#
+# Usage: ./check_backup_ftp -host <ftp_host> -user <ftp_user) -password <ftp_password> -dir <dir_to_check> -a <age>  
+#
+# Optional:
+#		-ssl
+#		-sftp
+#		-timeout
+#
+# Description:
+#
+# This plugin will verify <dir_to_check> on a FTP server dir and check its 
+# age.
+# Age is a number followed by a letter: h,d,w,m,y - interpreted as hours,days,weeks, months, years
+#
+# Output:
+#
+# If the <dir_to_check> is older that <age> it will return a CRITICAL state 
+# and print out a message in the following format: "<dir_to_check> is X 
+# days old (older than <age>)"
+#
+# Examples:
+#
+# Check if daily backup is older that 24 hours...
+#
+#   check_backup_ftp -host backup.example.com --user user_name --password user_passwd --dir cpbackup/daily --age 24h
+#
+# Check weekly backup is older that 1 week...
+#
+#   check_backup_ftp -host backup.example.com --user user_name --password user_passwd --dir cpbackup/weekly --age 1w
+#
+# Check monthly monthly backup is older that 1 month using an ini file to store user and passwd...
+#
+#   check_backup_ftp -host backup.example.com --extra-opts=check_backup_ftp@/etc/icinga/check_backup_ftp.ini --dir cpbackup/monthly --age 1m
+#
+# check_backup_ftp.ini:
+#
+#[check_backup_ftp]
+#
+#;
+#; Comments are ok, start line with ; 
+#;
+#
+#user="ftp_user_name"
+#password"ftp_secret_password"
+#
+#; End of check_backup_ftp.ini
+#
+#
+#
+# This module is free software; you can redistribute it and/or modify it
+# under the terms of GNU general public license (gpl) version 3.
+# See the LICENSE file for details.
+#
+
+use strict;
+use warnings;
+
+use 5.00800;
+
+use IO::Select;
+use Nagios::Plugin 0.31;
+use Nagios::Plugin::Getopt;
+use Nagios::Plugin::Threshold;
+use Nagios::Plugin::Functions;
+use Readonly;
+
+use Net::FTP;
+use Net::SFTP::Foreign;
+use File::Basename qw(fileparse);
+use File::Listing qw(parse_dir);
+
+our $VERSION = '0.1.0';
+
+Readonly our $DEFAULT_CMDFILE		=> "/var/spool/icinga/cmd/icinga.cmd";
+Readonly our $DEFAULT_NAG_SERVICE	=> "Backup FTP";
+
+# IMPORTANT: Nagios plugins could be executed using embedded perl in this case
+#            the main routine would be executed as a subroutine and all the
+#            declared subroutines would therefore be inner subroutines
+#            This will cause all the global lexical variables not to stay shared
+#            in the subroutines!
+#
+# All variables are therefore declared as package variables...
+#
+
+## no critic (ProhibitPackageVars)
+our ( $options, $plugin, $threshold, $age_secs, $dir_mtime);
+
+# the script is declared as a package so that it can be unit tested
+# but it should not be used as a module
+if ( !caller ) {
+    run();
+}
+
+##############################################################################
+# subroutines
+
+##############################################################################
+# Usage     : verbose("some message string", $optional_verbosity_level);
+# Purpose   : write a message if the verbosity level is high enough
+# Returns   : n/a
+# Arguments : message : message string
+#             level   : options verbosity level
+# Throws    : n/a
+# Comments  : n/a
+# See also  : n/a
+sub verbose {
+
+    # arguments
+    my $message = shift;
+    my $level   = shift;
+
+    if ( !defined $message ) {
+        $plugin->nagios_exit( UNKNOWN,
+            q{Internal error: not enough parameters for 'verbose'} );
+    }
+
+    if ( !defined $level ) {
+        $level = 0;
+    }
+	
+	# Print message if verbose enough or debug enabled
+    if ( $level < $options->verbose || $options->debug) {
+        if ( !print $message ) {
+            $plugin->nagios_exit( UNKNOWN, 'Error: cannot write to STDOUT' );
+        }
+    }
+
+    return;
+
+}
+
+
+##############################################################################
+# Usage     : run();
+# Purpose   : main method
+# Returns   : n/a
+# Arguments : n/a
+# Throws    : n/a
+# Comments  : n/a
+# See also  : n/a
+sub run {
+
+    ################################################################################
+    # Initialization
+
+    $plugin = Nagios::Plugin->new( shortname => 'CHECK_BACKUP_FTP' );
+
+    my $time = time;
+
+    ########################
+    # Command line arguments
+
+    $options = Nagios::Plugin::Getopt->new(
+        usage   => 'Usage: %s [OPTIONS]',
+        version => $VERSION,
+        url     => 'https://github.com/felixenescu/nagios_plugins',
+        blurb   => 'Check backup via FTP',
+    );
+
+    $options->arg(
+        spec     => 'debug',
+        help     => 'Prints debugging information',
+        required => 0,
+        default  => 0,
+    );
+
+    $options->arg(
+        spec     => 'verbose=i',
+        help     => 'Prints debugging information',
+        required => 0,
+        default  => 0,
+    );
+	
+    $options->arg(
+        spec     => 'sftp',
+        help     => 'Connect using SSH FTP instead of plain FTP (RFC4251)',
+        required => 0,
+        default  => 0,
+    );
+
+    $options->arg(
+        spec     => 'host=s',
+        help     => 'FTP server to check',
+        required => 1,
+    );
+
+    $options->arg(
+        spec     => 'user=s',
+        help     => 'FTP User',
+        required => 1,
+    );
+
+    $options->arg(
+        spec     => 'password=s',
+        help     => 'FTP Password',
+        required => 1,
+    );
+	
+    $options->arg(
+        spec     => 'dir=s',
+        help     => 'Dir to check',
+        required => 1,
+    );
+	
+    $options->arg(
+        spec     => 'timeout=i',
+        help     => 'FTP server timeout',
+        required => 0,
+        default  => 15,
+    );
+
+	$options->arg(
+        spec     => 'age=s',
+        help     => 'Max age: <number><letter>, like 1h, 1d, 2w, 3m, 4y',
+        required => 1,
+    );
+	
+   $options->arg(
+        spec     => 'passive',
+        help     => 'Submit a passive check result to Nagios/Icinga',
+        required => 0,
+        default  => 0,
+    );
+	
+    $options->arg(
+        spec     => 'cmdfile=s',
+        help     => 'Nagios/Icinga command file',
+        required => 0,
+		default  => $DEFAULT_CMDFILE,
+    );
+
+	$options->arg(
+        spec     => 'nagios_host=s',
+        help     => 'Hostname as configured in Nagios/Icinga for passive check result',
+        required => 0,
+    );
+	
+	$options->arg(
+        spec     => 'nagios_service=s',
+        help     => 'Service description as configured in Nagios/Icinga for passive check result',
+        required => 0,
+ 		default  => $DEFAULT_NAG_SERVICE,
+	);
+
+    $options->getopts();
+
+    ###############
+    # Sanity checks
+	
+	if ( $options->passive ) {
+		if ( !$options->nag_host) {
+			$plugin->nagios_exit( UNKNOWN,
+				'Hostname configured in Nagios/Icinga must be provided in passive mode' );
+		}
+		if ( !$options->nag_service) {
+			$plugin->nagios_exit( UNKNOWN,
+				'Service description configured in Nagios/Icinga must be provided in passive mode' );
+		}		
+    }
+
+	if ( defined $options->age ) {
+		my $period =  substr( $options->age, -1 );
+		my $age_num = substr( $options->age, 0, -1 );
+		#verbose "Age " . $options->age . " period " . $period . " age_num " . $age_num . "\n";
+		if ( $age_num !~ /^-?\d+$/ ) {
+			verbose "UNKNOWN: Age is not integer: " . $options->age. "\n";
+			$plugin->nagios_exit( UNKNOWN, "UNKNOWN: Age is not integer: " . $options->age. "\n" );
+		}
+		$age_num = $age_num + 0;
+		if ( $period eq "h" ) {
+			$age_secs = $age_num*3600
+		} elsif ( $period eq "d" ) {
+			$age_secs = $age_num*3600*24
+		} elsif ( $period eq "w" ) {
+			$age_secs = $age_num*3600*24*7
+		} elsif ( $period eq "m" ) {
+			$age_secs = $age_num*3600*24*7*31
+		} elsif ( $period eq "y" ) {
+			$age_secs = $age_num*3600*24*365
+		} else {
+			$plugin->nagios_exit( UNKNOWN,
+				'Unknown age period' . $period . ' for age ' . $age_num);
+		}
+	} else {
+		$plugin->nagios_exit( UNKNOWN,
+			'Age must be provided.' );
+	}
+    verbose "Using age " . $age_secs . " (from " . $options->age . ")\n";
+
+    ################
+    # Set the limits
+
+    $threshold = Nagios::Plugin::Threshold->set_thresholds(
+        warning  => $age_secs,
+        critical => $age_secs,
+    );
+
+    ################################################################################
+
+
+	my $ftp;
+	if ($options->sftp) {
+		$ftp = Net::SFTP::Foreign->new($options->host,
+			user => $options->user,
+			password => $options->password,
+			timeout => $options->timeout,
+		#    more => [qw(-o PreferredAuthentications=keyboard-interactive)],
+			);
+		if ( $ftp->error ) {
+			verbose "CRITICAL: SFTP connection to " . $options->host. " error " . $ftp->error ."\n";
+			$plugin->nagios_exit( CRITICAL, "CRITICAL: SFTP connection to " . $options->host. " timed out" );
+		}
+		verbose "Connected to " . $options->host . "(" . $ftp->status . ") via SFTP\n";
+		verbose "Logged as user ". $options->user . " to host " . $options->host . "\n";
+		
+		my $dir_stat = $ftp->stat( $options->dir );
+		if ( ! defined $dir_stat) {
+			verbose "CRITICAL: Could not get mtime for remote dir ". $options->dir . "\n";
+			$plugin->nagios_exit( CRITICAL, "CRITICAL: Could not get mtime for remote dir ". $options->dir );
+		}
+		$dir_mtime = $dir_stat->mtime;
+		
+	} else {
+		$ftp = Net::FTP -> new($options->host,
+			Debug => 0,
+			Timeout => $options->timeout,
+			Passive => 1 #must be in passive mode to work
+			);
+		if ( ! defined $ftp ) {
+			verbose "CRITICAL: Could not connect to host " . $options->host . "\n";
+			$plugin->nagios_exit( CRITICAL, "CRITICAL: Could not connect to host " . $options->host );
+		}
+		verbose "Connected to " . $options->host . "(" . $ftp->status . ") via FTP\n";
+		if (  !$ftp->login($options->user, $options->password)  ) {
+			verbose "CRITICAL: Could not login as user ". $options->user . " to host " . $options->host . " (" . $ftp->message . ")\n";
+			$plugin->nagios_exit( CRITICAL, "CRITICAL: Could not login as user " . $options->user . " to host " . $options->host . " (" . $ftp->message . ")" );
+		} else {
+			verbose "Logged as user ". $options->user . " to host " . $options->host . "\n";
+		}
+		my ( $dirname, $directories ) = fileparse( $options->dir );
+
+		if ( !$ftp->cwd( $directories ) ) {
+			verbose "CRITICAL: Cannot cwd to ". $directories . " (" . $ftp->message . ")\n";
+			$plugin->nagios_exit( CRITICAL, "CRITICAL: Cannot cwd to ". $directories . " (" . $ftp->message . ")");
+		}
+		verbose "My base is $dirname. Cwd to ". $directories . "\n";
+		
+		my $ls = $ftp->dir();
+		if ( !defined $ls ) {
+			verbose "CRITICAL: Cannot list dir ". $directories . " (" . $ftp->message . ")\n";
+			$plugin->nagios_exit( CRITICAL, "CRITICAL: Cannot list dir ". $directories . " (" . $ftp->message . ")");
+		}
+		
+		foreach my $entry (parse_dir($ls)) {
+			my ($name, $type, $size, $mtime, $mode) = @$entry;
+			#print "File $name has an mtime of $mtime\n";
+			if ( $name eq $dirname ) {
+				#print "=====================File $name has an mtime of $mtime\n";
+				$dir_mtime = $mtime;
+				last;
+			}
+		}
+		if ( !defined $dir_mtime) {
+				verbose "CRITICAL: Cannot find dir $dirname in ". $directories . "\n";
+				$plugin->nagios_exit( CRITICAL, "CRITICAL: Cannot find dir $dirname in ". $directories );
+		}
+	}
+	verbose "Dir" . $options->dir . " has age $dir_mtime\n";
+
+	my $dir_age = $time - $dir_mtime;
+	my $status;
+	if ( $dir_age <= $age_secs ) {
+		$status = "Backup " . $options->dir . " on host " . $options->dir . " is fresh - newer than " . $options->age;
+	} else {
+		$status = "Backup " . $options->dir . " on host " . $options->dir . " is stale - older than " . $options->age;
+	}
+
+    $plugin->add_perfdata(
+        label     => 'age',
+        value     => $dir_age,
+        uom       => q{s},
+        threshold => $threshold,
+    );
+
+    $plugin->add_perfdata(
+        label => 'time',
+        value => time - $time,
+        uom   => q{s},
+    );
+
+	
+	if ( $options->passive ) {
+	
+		Nagios::Plugin::Functions::_fake_exit(1);
+		my $e = $plugin->nagios_exit( $threshold->get_status($dir_age), $status );
+		
+		my $cmdfile = $options->cmdfile;
+		
+		my $cmdline = "[" . time() . "] PROCESS_SERVICE_CHECK_RESULT;";
+		$cmdline .= 
+			  $options->nag_host . ";"
+			. $options->nag_service . ";"
+			. $e->return_code . ";"
+			. $e->message;
+
+		verbose "$cmdline\n";
+		my $result = `/bin/echo "$cmdline" >> $cmdfile`;
+
+	} else {
+		verbose "$status\n";
+		$plugin->nagios_exit( $threshold->get_status($dir_age), $status );
+	}
+    return;
+
+}
+
+1;
