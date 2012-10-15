@@ -298,7 +298,7 @@ sub run {
 		$plugin->nagios_exit( UNKNOWN,
 			'Age must be provided.' );
 	}
-    verbose "Using age " . $age_secs . " (from " . $options->age . ")\n";
+    verbose "Using age " . $age_secs . " (" . age2str($age_secs) . ") from " . $options->age . "\n";
 
     ################
     # Set the limits
@@ -378,14 +378,14 @@ sub run {
 				$plugin->nagios_exit( CRITICAL, "CRITICAL: Cannot find dir $dirname in ". $directories );
 		}
 	}
-	verbose "Dir" . $options->dir . " has age $dir_mtime\n";
+	verbose "Dir" . $options->dir . " has age $dir_mtime (" . age2str($age_secs) . ")\n";
 
 	my $dir_age = $time - $dir_mtime;
 	my $status;
 	if ( $dir_age <= $age_secs ) {
-		$status = "Backup " . $options->dir . " on host " . $options->dir . " is fresh - newer than " . $options->age;
+		$status = "Backup " . $options->dir . " on host " . $options->host . " is fresh (" . age2str($dir_age) . ") - newer than " . $options->age;
 	} else {
-		$status = "Backup " . $options->dir . " on host " . $options->dir . " is stale - older than " . $options->age;
+		$status = "Backup " . $options->dir . " on host " . $options->host . " is stale (" . age2str($dir_age) . ") - older than " . $options->age;
 	}
 
     $plugin->add_perfdata(
@@ -426,5 +426,38 @@ sub run {
     return;
 
 }
+
+##############################################################################
+# Usage     : age2str( $dir_age );
+# Purpose   : Translate age in seconds to string like 2d 3h
+# Returns   : age as string
+# Arguments : age as seconds
+# Throws    : n/a
+# Comments  : n/a
+# See also  : n/a
+sub age2str() {
+	my $secs = shift;
+	my $rez = "";
+	
+	if( !defined $secs ) {
+			verbose "UNKNOWN: Need an argument in age2str\n";
+			$plugin->nagios_exit( UNKNOWN, "UNKNOWN: Need an argument in age2str\n" );
+	}
+	
+	if ( $secs >= (3600*24) ) {
+		$rez .= sprintf ("%ud ", $secs/(3600*24) + 0.5 );
+		$secs = $secs % (3600*24)
+	}
+	if  ( $secs >= (3600) ) {
+		$rez .= sprintf ("%u:", $secs/(3600) + 0.5 );
+		$secs = $secs % (3600)
+	}
+	if  ( $secs >= (60) ) {
+		$rez .= sprintf ("%u:", $secs/(60) + 0.5 );
+		$secs = $secs % (60)
+	}
+	$rez .= sprintf ("%d", $secs);
+}
+
 
 1;
