@@ -329,7 +329,10 @@ sub run {
 	} else {
 		$dir_mtime = getFTPage ();
 	}
-	my $dir_age = $time - $dir_mtime;
+	
+	# In case NFS/FTP server has bad time - future time :-)
+	my $dir_age = ($time > $dir_mtime) ? $time - $dir_mtime : 0;
+	
 	verbose "Dir" . $options->dir . " has was created at $dir_mtime and has age $dir_age (" . age2str($dir_age) . ")\n";
 	
 	my $status;
