@@ -56,9 +56,8 @@ Readonly our $DEFAULT_NAG_SERVICE	=> "DNS BlackList C Class";
 #
 
 ## no critic (ProhibitPackageVars)
-our ( @listed, @timeouts, $ip, $hname, $dom, $options, $plugin, $threshold, $res, $timeouts, $iponly, $allclass, $ohost
-);
-
+our ( @listed, @timeouts, %bl, %wl, $options, $plugin, $threshold, $res, $timeouts, $iponly, $allclass );
+our ( $ip, $hname, $dom,$ohost ); 
 # the script is declared as a package so that it can be unit tested
 # but it should not be used as a module
 if ( !caller ) {
@@ -92,7 +91,7 @@ sub verbose {
         $level = 0;
     }
 
-    if ( $level < $options->verbose ) {
+    if ( $level < $options->verbose || $options->debug) {
         if ( !print $message ) {
             $plugin->nagios_exit( UNKNOWN, 'Error: cannot write to STDOUT' );
         }
@@ -199,7 +198,7 @@ sub mdns {
                 $sel->remove($sock);
 
                 my $ans = $res->bgread($sock);
-                my $host;
+                my @host;
                 if ($ans) {
 
                     foreach my $rr ( $ans->answer ) {
@@ -209,10 +208,10 @@ sub mdns {
                             next;
                         }
 
-                        $host = $rr->address;
-
+                        push @host, $rr->address;
+						verbose "addr: $addr is host: ". $rr->address . "\n";
                         # take just the first answer
-                        last;
+                        #last;
                     }
                 }
                 else {
@@ -221,7 +220,7 @@ sub mdns {
                         print 'DEBUG: no answer: ' . $res->errorstring() . "\n";
                     }
                 }
-                &{$callback}( $addr, $host );
+                &{$callback}( $addr, @host );
             }
 
             @ready = $sel->can_read(0);
@@ -445,8 +444,9 @@ sub run {
         mdns(
             [ $ohost ],
             sub {
-                my ( $addr, $host ) = @_;
-                $ip = $host;
+                my ( $addr, @host ) = @_;
+                # Just take first address
+				$ip = pop @host;
             }
         );
 
@@ -520,16 +520,62 @@ sub run {
 		$end_ip = $start_ip;
 	}
 	
-    my @servers  = @{ $options->server };
-    my $nservers = scalar @servers;
+	my @servers; 
+	my $nservers = 0;
+	if ( defined $options->server ) { 
+		foreach my $server ( @{ $options->server } ) {
+			#verbose "Server: $server\n";
+			# Check if any servers have BL values or WL values
+			my ($rbl, $lst) = split ( /#/, $server );
+			#verbose "Server : $server, split one: =$rbl=, =$lst=\n";
+			push ( @servers, $rbl );
+			if ( defined $lst) {
+				my ($type, $vals) = split ( /=/, $lst);
+				#verbose "Server: $server, split two: =$type=, =$vals=\n";
+
+				if ( $type eq "BL" ) {
+					$bl{$rbl} = $vals;
+				} elsif ( $type eq "WL" ) {
+					$wl{$rbl} = $vals;
+				} else {
+					$plugin->nagios_exit( UNKNOWN, 'Unknown list id $type' );
+				}
+			}
+		}
+		$nservers = scalar @servers;
+	}
 	
 	my @rhservers;
-	my $nrhservers;
-	if ( !$iponly ) {
-		@rhservers  = @{ $options->rhserver };
-		$nrhservers = scalar @rhservers;
-		$nservers += $nrhservers;
+	my $nrhservers = 0;
+	if ( defined $options->rhserver ) {
+		if ( !$iponly ) {
+			foreach my $server ( @{ $options->rhserver } ) {
+				#verbose "RHServer: $server\n";
+				# Check if any servers have BL values or WL values
+				my ($rbl, $lst) = split ( /#/, $server );
+				#verbose "Server: $server, split: =$rbl=, =$lst=\n";
+				push ( @rhservers, $rbl );
+				if ( defined $lst) {
+					my ($type, $vals) = split ( /=/, $lst);
+					#verbose "Server: $server, split: =$type=, =$vals=\n";
+					if ( $type eq "BL" ) {
+						$bl{$rbl} = $vals;
+					} elsif ( $type eq "WL" ) {
+						$wl{$rbl} = $vals;
+					} else {
+						$plugin->nagios_exit( UNKNOWN, 'Unknown list id $type' );
+					}
+				}
+
+			}
+			$nrhservers = scalar @rhservers;
+			$nservers += $nrhservers;
+		}
 	}
+	
+    if ( $nservers <= 0 ) {
+        $plugin->nagios_exit( UNKNOWN, 'No RBL servers' );
+    }
 	
     my $total = 0;
 	my $listed_hosts = 0;
@@ -564,21 +610,45 @@ sub run {
 		mdns(
 			\@addrs,
 			sub {
-				my ( $addr, $host ) = @_;
+				my ( $addr, @host ) = @_;
 				my $tmp = $addr;
 				# extract RBL we checked
 				$addr =~ s/^(?:\d+[.]){4}//mxs;
 				if( !$iponly) {
 					$addr =~ s/^($dom)\.//mxs;
 				}
-				if ( defined $host ) {
-					if ( $host eq q{} ) {
+				if ( scalar @host ) {
+					if ( $host[0] eq q{} ) {
 						push @timeouts, $addr;
 					}
 					else {
-						verbose "listed in $addr as $host\n";
+						verbose "listed in $addr as $host[0]\n";
 						if ( !$options->get('whitelistings') ) {
-							push @listed, $addr;
+							
+							if ( exists $bl{$addr} ) {
+								verbose "===== BL listed in $addr as $host[0] =$bl{$addr}= \n";
+								# We got an answer. FOr each answer check if it present in black or white answers 
+								foreach my $crt_host (@host) {
+									if( $bl{$addr} =~ m/$crt_host/) { 
+										verbose "===== SPECIAL MATCH listed in $addr as $crt_host =$bl{$addr}= \n";
+										push @listed, $addr;
+										last;
+									}
+								}
+							} elsif ( exists $wl{$addr} ) {
+								verbose "===== WL listed in $addr as $host[0] =$wl{$addr}= \n";
+								# We got an answer. FOr each answer check if it present in black or white answers 
+								foreach my $crt_host (@host) {
+									if( $wl{$addr} !~ m/$crt_host/) { 
+										verbose "===== SPECIAL NOT MATCH listed in $addr as $crt_host =$wl{$addr}= \n";
+										push @listed, $addr;
+										last;
+									}
+								}
+							
+							} else {
+								push @listed, $addr;
+							}
 						}
 					}
 				}
@@ -603,8 +673,7 @@ sub run {
 				  . " not whitelisted on " . scalar @listed . " "
 				  . ( ( scalar @listed == 1 ) ? 'server' : 'servers' )
 				  . " of $nservers";
-			}
-			else {
+			} else {
 				$status .=
 					$ohost
 				  . " blacklisted on " . scalar @listed . " "
@@ -660,15 +729,14 @@ sub run {
 		}
 	}
 	
-	if ( $allclass ) {
-		# If we check many IPs report how many where listed.
-		$plugin->add_perfdata(
-			label     => 'hosts',
-			value     => $listed_hosts,
-			uom       => q{},
-			threshold => $threshold,
-		);
-	}
+
+	# If we check many IPs report how many where listed.
+	$plugin->add_perfdata(
+		label     => 'hosts',
+		value     => $listed_hosts,
+		uom       => q{},
+		threshold => $threshold,
+	);
 	
     $plugin->add_perfdata(
         label     => 'servers',
