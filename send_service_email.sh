@@ -84,5 +84,7 @@ fi
 
 SERVICEDESC_CLEAN=`echo "$SERVICEDESC" | tr ' ' '_'`
 
+#/usr/bin/printf "%b" "Notification Type: $NOTIFICATIONTYPE\n\nService: $SERVICEDESC_CLEAN\nHost: $HOSTNAME\nHost alias: $HOSTALIAS\nAddress: $HOSTADDRESS\nState: $SERVICESTATE\nDate/Time: $LONGDATETIME\n\nAdditional Info:$SERVICEOUTPUT\n\nService Perfdata: http://monitor.qsol.ro/pnp4nagios/index.php/graph?host=$HOSTNAME&srv=$SERVICEDESC_CLEAN\nHost Information: http://monitor.qsol.ro/icinga/cgi-bin/extinfo.cgi?type=1&host=$HOSTNAME\nHost Service Detail: http://monitor.qsol.ro/icinga/cgi-bin/status.cgi?host=$HOSTNAME&nostatusheader\n" | /bin/mail -s "** $NOTIFICATIONTYPE: $HOSTALIAS/$SERVICEDESC is $SERVICESTATE **" $CONTACTEMAIL
+
 /usr/bin/printf "%b" "Notification Type: $NOTIFICATIONTYPE\n\nService: $SERVICEDESC_CLEAN\nHost: $HOSTNAME\nHost alias: $HOSTALIAS\nAddress: $HOSTADDRESS\nState: $SERVICESTATE\nDate/Time: $LONGDATETIME\n\nAdditional Info:$SERVICEOUTPUT\n\nService Perfdata: http://monitor.qsol.ro/pnp4nagios/index.php/graph?host=$HOSTNAME&srv=$SERVICEDESC_CLEAN\nHost Information: http://monitor.qsol.ro/icinga/cgi-bin/extinfo.cgi?type=1&host=$HOSTNAME\nHost Service Detail: http://monitor.qsol.ro/icinga/cgi-bin/status.cgi?host=$HOSTNAME&nostatusheader\n" | /bin/mail -s "** $NOTIFICATIONTYPE: $HOSTALIAS/$SERVICEDESC is $SERVICESTATE **" $CONTACTEMAIL
 
