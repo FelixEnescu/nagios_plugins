@@ -627,7 +627,7 @@ sub run {
 							
 							if ( exists $bl{$addr} ) {
 								verbose "===== BL listed in $addr as $host[0] =$bl{$addr}= \n";
-								# We got an answer. FOr each answer check if it present in black or white answers 
+								# We got an answer. For each answer check if it present in black or white answers 
 								foreach my $crt_host (@host) {
 									if( $bl{$addr} =~ m/$crt_host/) { 
 										verbose "===== SPECIAL MATCH listed in $addr as $crt_host =$bl{$addr}= \n";
@@ -689,7 +689,7 @@ sub run {
 		# append timeout info, but do not account these in status
 		if (@timeouts) {
 			$timeouts = scalar @timeouts;
-			$status =
+			$status .=
 				" ($timeouts server"
 			  . ( ( $timeouts > 1 ) ? 's' : q{} )
 			  . ' timed out: '
