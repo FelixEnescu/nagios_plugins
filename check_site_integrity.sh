@@ -110,6 +110,7 @@ function CLEAN {
 		LOG "  md5_files: $md5_files="
 		for fl in $site_dirs $log_files $md5_files ; do
 			LOG "Remove file: $fl"
+			rm -rf $fl
 		done
 	else
 		LOG "  Keeping ALL ($versions_to_keep) versions"
@@ -262,7 +263,7 @@ elif [ "$check" = '1' ] ; then
 	LOG "Checking"
 	DOWNLOAD
 	CHECK
-#	CLEAN
+	CLEAN
 	EOJ 0
 elif [ "$update" = '1' ] ; then
 	LOG "Updating"
