@@ -405,8 +405,8 @@ sub run {
     # Sanity checks
 	
     my $debug   = $options->debug();
-	$iponly = $options->iponly;
 	$allclass = $options->allclass;
+	$iponly = $options->iponly || $options->allclass;
 	$ohost = $options->host;
 	
 	
