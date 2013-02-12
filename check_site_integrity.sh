@@ -4,9 +4,15 @@
 # Integrity Check for web sites: Createed local repository for PHP files and
 #	check MD5 sum for them
 #
-# Version 1.4
+# Version 1.4.2
 #
 # Config file format: site:ftpuser:ftppass:versions_to_keep:nagios_host:nagios_service
+#
+# 2013-01-27 FLX f@qsol.ro
+#	- Added JS to checked file types
+#
+# 2013-01-27 FLX f@qsol.ro
+#	- Redirected ls errors to /dev/null in function clean
 #
 # 2013-01-04 FLX f@qsol.ro
 #	- Modified to submit a passive check to Nagios/Icinga - only for check command
@@ -44,7 +50,7 @@ cmd_file="/var/spool/icinga/cmd/icinga.cmd"
 versions_to_keep=5
 
 #sysadmin='sysadmin@qwerty-sol.ro'
-sysadmin='f@qsol.ro'
+#sysadmin='f@qsol.ro'
 
 log_file_prefix="check.result"
 wget_log_file_prefix="check.result.wget"
@@ -82,7 +88,7 @@ function EOJ(){
 	LOG "Exiting"
 
 	if [ "x$email" != "x" ] ; then
-		cat $site.$log_file_prefix | mailx -s "$site integrity check" $sysadmin
+		cat $site.$log_file_prefix | mailx -s "$site integrity check" $email
 	fi
 	
 	exit $exit_code
@@ -102,11 +108,11 @@ function CLEAN {
 
 	if [ "$versions_to_keep" -ge "0" ] ; then
 		LOG "  Keeping $versions_to_keep versions"
-		site_dirs=$( ls -trd $site.20* | head --lines=-$versions_to_keep )
+		site_dirs=$( ls -trd $site.20* 2>/dev/null | head --lines=-$versions_to_keep )
 		LOG "  site_dirs: $site_dirs="
-		log_files=$( ls -tr $site.$log_file_prefix.20* | head --lines=-$versions_to_keep )
+		log_files=$( ls -tr $site.$log_file_prefix.20* 2>/dev/null | head --lines=-$versions_to_keep )
 		LOG "  log_files: $log_files="
-		md5_files=$( ls -tr $site.$md5_file_prefix.20* | head --lines=-$versions_to_keep )
+		md5_files=$( ls -tr $site.$md5_file_prefix.20* 2>/dev/null | head --lines=-$versions_to_keep )
 		LOG "  md5_files: $md5_files="
 		for fl in $site_dirs $log_files $md5_files ; do
 			LOG "Remove file: $fl"
@@ -125,7 +131,7 @@ function DOWNLOAD {
 
 	mv $site $site.$now
 	LOG "  Start wget ..."
-	wget --no-verbose --output-file=$site.$wget_log_file_prefix --ftp-user=$ftpuser --ftp-password=$ftppassword --mirror -A php ftp://$site/
+	wget --no-verbose --output-file=$site.$wget_log_file_prefix --ftp-user=$ftpuser --ftp-password=$ftppassword --mirror -A php,js ftp://$site/
 	LOG "  End wget."
 	
 	LOG "Download finished."
@@ -161,7 +167,7 @@ function CHECK {
 
 	cmdline="["$timestamp"] PROCESS_SERVICE_CHECK_RESULT;"$nagioshost";"$nagiosservice";"$exit_code";"$status" - "$plugin_output
 
-	/bin/echo $cmdline
+#	/bin/echo $cmdline
 	/bin/echo $cmdline >> $cmd_file
 	
 }
