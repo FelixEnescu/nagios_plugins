@@ -41,9 +41,10 @@ our $VERSION = '1.3.0';
 
 Readonly our $DEFAULT_RETRIES       => 4;
 Readonly our $DEFAULT_WORKERS       => 20;
-Readonly our $DEFAULT_QUERY_TIMEOUT => 15;
+Readonly our $DEFAULT_QUERY_TIMEOUT => 5;
 
 Readonly our $DEFAULT_CMDFILE		=> "/var/spool/icinga/cmd/icinga.cmd";
+Readonly our $DEFAULT_REPDIR		=> "/var/spool/icinga/check_rbl";
 Readonly our $DEFAULT_NAG_SERVICE	=> "DNS BlackList C Class";
 
 # IMPORTANT: Nagios plugins could be executed using embedded perl in this case
@@ -338,6 +339,19 @@ sub run {
     );
 	
     $options->arg(
+        spec     => 'report|e',
+        help     => 'Create a CSV report',
+        required => 0,
+        default  => 0,
+    );
+    $options->arg(
+        spec     => 'repdir|d=s',
+        help     => 'CSV report directory',
+        required => 0,
+		default  => $DEFAULT_REPDIR,
+    );
+
+    $options->arg(
         spec     => 'pasive|p',
         help     => 'Submit a pasive check result to Nagios/Icinga',
         required => 0,
@@ -578,16 +592,16 @@ sub run {
     }
 	
     my $total = 0;
+	my $total_timeouts = 0;
 	my $listed_hosts = 0;
     my $status = "";
-
+	my $csv_status ="ip,server,response\n";
 	
 	for (my $last_digit = $start_ip; $last_digit <= $end_ip; $last_digit++ ) {
 		$ip = $class_ip . $last_digit;
 		@listed = (); 
 		@timeouts = ();
-		
-		
+	
 		if ( $allclass ) {
 			$ohost = $ip;
 		}
@@ -665,15 +679,16 @@ sub run {
 		
 		if (scalar @listed > 0 ) {
 			$listed_hosts ++;
-			
+			my $response;
 			if ( $options->get('whitelistings') ) {
-
+				$response = "not_whitelisted";
 				$status .=
 					$ohost
 				  . " not whitelisted on " . scalar @listed . " "
 				  . ( ( scalar @listed == 1 ) ? 'server' : 'servers' )
 				  . " of $nservers";
 			} else {
+				$response = "blacklisted";
 				$status .=
 					$ohost
 				  . " blacklisted on " . scalar @listed . " "
@@ -682,11 +697,14 @@ sub run {
 
 			}
 			$status .= " (@listed); ";
-
+			foreach my $lst (@listed) {
+				$csv_status .= $ip.",".$lst.",".$response."\n";
+			}
 		}
 
 
 		# append timeout info, but do not account these in status
+		$total_timeouts += scalar @timeouts;
 		if (@timeouts) {
 			$timeouts = scalar @timeouts;
 			$status .=
@@ -694,6 +712,11 @@ sub run {
 			  . ( ( $timeouts > 1 ) ? 's' : q{} )
 			  . ' timed out: '
 			  . join( ', ', @timeouts ) . ')';
+
+			foreach my $lst (@timeouts) {
+				$csv_status .= $ip.",".$lst.",timeout\n";
+			}
+			  
 		}
 		
 		
@@ -728,8 +751,29 @@ sub run {
 			}
 		}
 	}
-	
 
+	if ( $options->report ) {
+	
+		my $fname = $ohost . "." . $options->pasive . $options->report . $options->iponly . ".csv";
+		
+		open(my $fh, ">", $options->repdir . "/" . $fname) 
+			or die "cannot open > $fname: $!";
+			
+		$status = $listed_hosts . ' <a href="http://monitor.qsol.ro/check_rbl/' . $fname . '">' .( ( $listed_hosts == 1 ) ? 'host' : 'hosts' ). "</a> listed on ";
+		$status .= $total . " " .( ( $total == 1 ) ? 'server' : 'servers' ) . "; ";
+		$status .= $total_timeouts . " " . ( ( $total_timeouts == 1 ) ? 'timeout' : 'timeouts' );
+#		$status .= '<a href="http://monitor.qsol.ro/check_rbl/t.html">report</a>';
+
+		
+		print $fh "$csv_status";
+		close ($fh);
+		
+#		print "==\n$ohost\n==\n";
+#		print "==\n$fname\n==\n";
+		
+	}
+	
+	
 	# If we check many IPs report how many where listed.
 	$plugin->add_perfdata(
 		label     => 'hosts',
