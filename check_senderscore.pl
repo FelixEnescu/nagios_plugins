@@ -8,7 +8,10 @@ package main;
 # Based on check_rbl from Elan Ruusamae <glen@delfi.ee>
 # Adapted by FLX f@qsol.ro
 #
-# Version 0.1.1
+# Version 0.1.2
+#
+# 2013-02-20 FLX f@qsol.ro
+#	- NXDOMAIN now is OK and reported with score 100 and status "Insufficient Email Seen"
 #
 # 2013-02-12 FLX f@qsol.ro
 #	- Corected bug when IP does not have reverse
@@ -294,6 +297,9 @@ sub run {
 	
 	my $ans = $res->query($qry);
 	my $tmp; 
+	my $score;
+	my $status;
+	
 	if ($ans) {
 		foreach my $rr ( $ans->answer ) {
 			if ( !( $rr->type eq 'A' ) ) {
@@ -304,17 +310,23 @@ sub run {
 			# take just the first answer
 			last;
 		}
-	} else {
+		( $score = $tmp ) =~ s/(\d{1,3}) [.] (\d{1,3}) [.] (\d{1,3}) [.] (\d{1,3})/$4/mxs;
+		$status = "$score for $hname ($ip) on $DEFAULT_SENDERSCORESITE";
+		verbose "Score $score from answer $tmp.\n";
+		
+	} elsif ($res->errorstring() eq "NXDOMAIN" ) {
+		# Not enough data
+		$score = 100;
+		$status = "$hname ($ip) on $DEFAULT_SENDERSCORESITE: Insufficient Email Seen";
+		verbose "Insufficient Email Seen.\n";
+	} else { 
 		$plugin->nagios_exit( UNKNOWN, 'No answer from senderscore.org: ' . $res->errorstring() );
 
 		if ($debug) {
 			print 'DEBUG: no answer: ' . $res->errorstring() . "\n";
 		}
 	}
-	( my $score = $tmp ) =~ s/(\d{1,3}) [.] (\d{1,3}) [.] (\d{1,3}) [.] (\d{1,3})/$4/mxs;
-	verbose "Score $score from answer $tmp.\n";
-	
-	my $status = "$score for $hname ($ip) on $DEFAULT_SENDERSCORESITE";
+
 	
 	$plugin->add_perfdata(
 		label     => 'score',
