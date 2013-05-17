@@ -138,16 +138,23 @@ function DOWNLOAD {
 }
 
 
+
 function CHECK {
 	LOG "Check started ..."
 
 	LOG "  Start md5sum ..."
-	md5sum --check $site.$md5_file_prefix |grep -v OK | tee -a $site.$log_file_prefix
+	
+	find . -path "./$site/*" -name "*.php"  -exec md5sum '{}' \; > $site.$md5_file_prefix.crt
+	diff $site.$md5_file_prefix $site.$md5_file_prefix.crt | tee $site.$log_file_prefix.crt
+	cat $site.$log_file_prefix.crt >> $site.$log_file_prefix
+
+#	diff $site.$md5_file_prefix $site.$md5_file_prefix.crt | tee -a $site.$log_file_prefix
+#	md5sum --check $site.$md5_file_prefix |grep -v OK | tee -a $site.$log_file_prefix
 	LOG "  End md5sum."
 	
 	LOG "Check finished."
 	
-	fails=$( cat $site.$log_file_prefix | grep "FAILED" | wc -l )
+	fails=$( cat $site.$log_file_prefix.crt | wc -l )
 	
 	exit_code=$OK
 	if [ "$fails" != "0" ] ; then
