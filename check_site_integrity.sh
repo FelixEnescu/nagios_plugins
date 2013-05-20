@@ -4,9 +4,16 @@
 # Integrity Check for web sites: Createed local repository for PHP files and
 #	check MD5 sum for them
 #
-# Version 1.4.2
+# Version 1.5.0
 #
 # Config file format: site:ftpuser:ftppass:versions_to_keep:nagios_host:nagios_service
+#
+# 2013-05-18 FLX f@qsol.ro
+#	- Log command sumited to nagios
+#	- Fixed bug: match substring in config file
+#
+# 2013-05-18 FLX f@qsol.ro
+#	- Fixed bug: file additions were not detected
 #
 # 2013-01-27 FLX f@qsol.ro
 #	- Added JS to checked file types
@@ -174,7 +181,7 @@ function CHECK {
 
 	cmdline="["$timestamp"] PROCESS_SERVICE_CHECK_RESULT;"$nagioshost";"$nagiosservice";"$exit_code";"$status" - "$plugin_output
 
-#	/bin/echo $cmdline
+	/bin/echo $cmdline >> $site.$log_file_prefix
 	/bin/echo $cmdline >> $cmd_file
 	
 }
@@ -241,7 +248,7 @@ fi
 
 mv $site.$log_file_prefix $site.$log_file_prefix.$now
 
-tmp=$(grep $site $cfg_file)
+tmp=$(grep "^$site\:" $cfg_file)
 if [ -n "$tmp" ]; then
 	# Ok found $site line in config file
 	ftpuser=$( echo $tmp | awk -F":" '{print $2}' )
@@ -261,6 +268,8 @@ else
 	LOG "Site $site not found in config file $cfg_file"
 	EOJ $UNKNOWN
 fi
+
+#echo "==$tmp==$ftpuser==$ftppassword==$tmp_ver==$nagioshost==$nagiosservice==$versions_to_keep"
 
 if [ "$clean" = '1' ] ; then
 	LOG "Cleaning"
