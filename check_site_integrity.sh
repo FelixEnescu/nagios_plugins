@@ -4,9 +4,12 @@
 # Integrity Check for web sites: Createed local repository for PHP files and
 #	check MD5 sum for them
 #
-# Version 1.5.0
+# Version 1.5.1
 #
 # Config file format: site:ftpuser:ftppass:versions_to_keep:nagios_host:nagios_service
+#
+# 2013-06-05 FLX f@qsol.ro
+#	- Fixed bug: Number of versions argument was always 5. Both config file and comand line arguments were ignored
 #
 # 2013-05-18 FLX f@qsol.ro
 #	- Log command sumited to nagios
@@ -54,7 +57,7 @@ working_dir='/var/spool/icinga/check_site_integrity'
 cmd_file="/var/spool/icinga/cmd/icinga.cmd"
 
 
-versions_to_keep=5
+#versions_to_keep=5
 
 #sysadmin='sysadmin@qwerty-sol.ro'
 #sysadmin='f@qsol.ro'
@@ -181,7 +184,7 @@ function CHECK {
 
 	cmdline="["$timestamp"] PROCESS_SERVICE_CHECK_RESULT;"$nagioshost";"$nagiosservice";"$exit_code";"$status" - "$plugin_output
 
-	/bin/echo $cmdline >> $site.$log_file_prefix
+	LOG "$cmdline" 
 	/bin/echo $cmdline >> $cmd_file
 	
 }
@@ -261,8 +264,11 @@ if [ -n "$tmp" ]; then
 		LOG "Site $site line $tmp not correct (user: $ftpuser / pass: $ftppassword) in config file $cfg_file"
 		EOJ $UNKNOWN
 	fi
-	if [ -n "$tmp_ver" ] && [ "$versions_to_keep" = "0" ] ; then
+	if [ -n "$tmp_ver" ] && [ -z "$versions_to_keep" ] ; then
 		versions_to_keep=$tmp_ver
+		LOG "Keeping $versions_to_keep versions"
+	else
+		LOG "Keeping $versions_to_keep versions (tmp_ver: $tmp_ver)"
 	fi
 else
 	LOG "Site $site not found in config file $cfg_file"
