@@ -8,7 +8,10 @@ package main;
 # Based on check_rbl from Elan Ruusamae <glen@delfi.ee>
 # Adapted by FLX f@qsol.ro
 #
-# Version 0.1.2
+# Version 0.1.3
+#
+# 2020-05-21 jhedlund
+#  - Move to Monitoring::Plugin due to Nagios::Plugin no longer available
 #
 # 2013-02-20 FLX f@qsol.ro
 #	- NXDOMAIN now is OK and reported with score 100 and status "Insufficient Email Seen"
@@ -24,14 +27,14 @@ package main;
 use strict;
 use warnings;
 
-use Nagios::Plugin 0.31;
-use Nagios::Plugin::Getopt;
-use Nagios::Plugin::Threshold;
-use Nagios::Plugin::Functions;
+use Monitoring::Plugin;
+use Monitoring::Plugin::Getopt;
+use Monitoring::Plugin::Threshold;
+use Monitoring::Plugin::Functions;
 use Net::DNS;
 use Readonly;
 
-our $VERSION = '0.1.0';
+our $VERSION = '0.1.3';
 
 Readonly our $DEFAULT_RETRIES       	=> 4;
 Readonly our $DEFAULT_QUERY_TIMEOUT 	=> 5;
@@ -109,14 +112,14 @@ sub run {
     ################################################################################
     # Initialization
 
-    $plugin = Nagios::Plugin->new( shortname => 'SENDERSCORE' );
+    $plugin = Monitoring::Plugin->new( shortname => 'SENDERSCORE' );
 
     my $time = time;
 
     ########################
     # Command line arguments
 
-    $options = Nagios::Plugin::Getopt->new(
+    $options = Monitoring::Plugin::Getopt->new(
         usage   => 'Usage: %s [OPTIONS]',
         version => $VERSION,
         url     => 'https://github.com/felixenescu/nagios_plugins',
@@ -286,9 +289,9 @@ sub run {
     ################
     # Set the limits
 
-    $threshold = Nagios::Plugin::Threshold->set_thresholds(
-        warning  => '@' . $options->critical . ':' . $options->warning,
-        critical => '@0:' . $options->critical,
+    $threshold = Monitoring::Plugin::Threshold->set_thresholds(
+        warning  => $options->warning . ':',
+        critical => $options->critical . ':',
     );
 
     ################################################################################
@@ -343,7 +346,7 @@ sub run {
 	
 	if ( $options->pasive ) {
 	
-		Nagios::Plugin::Functions::_fake_exit(1);
+		Monitorin::Plugin::Functions::_fake_exit(1);
 		my $e = $plugin->nagios_exit( $threshold->get_status($score), $status );
 		
 		#print "=msg=" . $e->message . "==\n";
